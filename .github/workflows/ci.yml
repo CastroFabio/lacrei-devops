@@ -1,0 +1,127 @@
+name: Node.js CI (NestJS)
+
+on:
+  push:
+    branches: ['main', 'staging']
+    paths:
+      - 'backend/**'
+  pull_request:
+    branches: ['main', 'staging']
+    paths:
+      - 'backend/**'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  ci-build:
+    name: Lint, Teste e Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar Dependências
+        run: npm ci
+
+      - name: Executar Linter
+        run: npm run lint
+
+      - name: Executar Testes Unitários
+        run: npm test
+
+      - name: Testar Build da Aplicação
+        run: npm run build
+
+  docker-build-push:
+    name: Docker Build & Push
+    needs: ci-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v4
+
+      - name: Login no GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extrair metadados para o Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+
+      - name: Construir e Enviar Imagem Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  container-smoke-test:
+    name: Validação do Container
+    needs: docker-build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Login no GHCR (para puxar a imagem privada se necessário)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Baixar e Executar Container Localmente
+        run: |
+          # Pega a tag baseada na branch ou commit atual
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          # Se for PR, usa o hash curto do commit
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          fi
+
+          echo "Testando imagem: $IMAGE_TAG"
+          docker run -d --name nest-app -p 3000:3000 $IMAGE_TAG
+
+      - name: Aguardar o Container Iniciar e Validar /status
+        run: |
+          echo "Aguardando aplicação subir..."
+          sleep 5
+
+          # Testa o endpoint /status
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/status)
+          echo "HTTP Status Code: $response"
+
+          if [ "$response" -eq 200 ]; then
+            echo "Sucesso! O endpoint /status respondeu 200 OK."
+          else
+            echo "Falha! O endpoint /status retornou o código $response"
+            docker logs nest-app
+            exit 1
+          fi

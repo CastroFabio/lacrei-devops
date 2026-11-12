@@ -1,0 +1,39 @@
+name: CD - Deploy Automatizado
+
+on:
+  workflow_run:
+    workflows: ['Node.js CI (NestJS)']
+    types:
+      - completed
+
+jobs:
+  deploy-staging:
+    name: 🚀 Deploy para Staging
+    runs-on: ubuntu-latest
+    # Executa apenas se o CI terminou com sucesso e a branch de origem foi a 'staging'
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'staging' }}
+    environment: staging
+
+    steps:
+      - name: Executar Deploy Staging
+        run: |
+          echo "Iniciando deploy para o ambiente de Staging..."
+          # Aqui você coloca o comando de deploy (ex: SSH, Webhook, AWS ECS, etc.)
+          # Exemplo: curl -X POST ${{ secrets.STAGING_WEBHOOK_URL }}
+          echo "Deploy para Staging concluído com sucesso!"
+
+  deploy-production:
+    name: 🚀 Deploy para Produção
+    runs-on: ubuntu-latest
+    # Executa apenas se o CI terminou com sucesso e a branch de origem foi a 'main'
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    environment:
+      name: production
+      url: https://api.suaaplicacao.com # Substitua pela sua URL real
+
+    steps:
+      - name: Executar Deploy Produção
+        run: |
+          echo "Iniciando deploy para o ambiente de Produção..."
+          # Aqui você coloca o comando de deploy para produção
+          echo "Deploy para Produção concluído com sucesso!"
